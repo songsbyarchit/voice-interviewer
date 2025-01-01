@@ -8,6 +8,7 @@ from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import subprocess
 import sys
+from datetime import datetime
 
 # Ensure that the virtual environment is activated
 def install_requirements():
@@ -123,6 +124,9 @@ def send_to_sheets():
 
         # Parse the transcription using AI
         parsed_data = ai_parse_transcription(transcription)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Format as YYYY-MM-DD HH:MM:SS
+        parsed_data.insert(2, timestamp)  # Insert the timestamp at the 3rd column (index 2)
 
         # Log the parsed data before sending it to Google Sheets
         print(f"Parsed data: {parsed_data}")
