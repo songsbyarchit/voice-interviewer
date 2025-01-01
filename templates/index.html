@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Interviewer - MVP</title>
+  <style>
+    /* Basic styling */
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
+    button {
+      margin: 0.5rem 0;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+    }
+    #transcript {
+      display: block;
+      width: 100%;
+      height: 150px;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Voice Interviewer MVP</h1>
+
+  <!-- Buttons -->
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button> <!-- Stop button, initially disabled -->
+  <button id="sendToSheetsBtn">Send to Sheets</button>
+
+  <!-- Transcript display -->
+  <textarea id="transcript" placeholder="Your transcription will appear here..."></textarea>
+
+  <script>
+    // Fetch API key from Flask (rendered as a variable in the HTML)
+    const apiKey = "{{ openai_api_key }}"; // This gets the OpenAI API key from Flask
+
+    // Check browser support
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition;
+    let isListening = false;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = true; // If you want continuous results
+      recognition.interimResults = true; // If you want to see partial (interim) results
+
+      // This will capture the transcript
+      recognition.addEventListener('result', (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        document.getElementById('transcript').value = transcript;
+      });
+
+      recognition.addEventListener('start', () => {
+        console.log('Speech recognition started');
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false; // Enable stop button when recording starts
+      });
+
+      recognition.addEventListener('end', () => {
+        console.log('Speech recognition ended');
+        if (isListening) {
+          // If user didn't click "Stop" but recognition ended automatically, restart
+          recognition.start();
+        }
+      });
+    } else {
+      alert('Sorry, your browser does not support Speech Recognition');
+    }
+
+    // Start recording
+    document.getElementById('startBtn').addEventListener('click', () => {
+      if (!isListening && recognition) {
+        isListening = true;
+        recognition.start();
+      }
+    });
+
+    // Stop recording
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      if (isListening && recognition) {
+        isListening = false;
+        recognition.stop();
+        document.getElementById('startBtn').disabled = false; // Re-enable start button
+        document.getElementById('stopBtn').disabled = true; // Disable stop button when recording ends
+      }
+    });
+
+    // Send transcription to Google Sheets
+    document.getElementById('sendToSheetsBtn').addEventListener('click', async () => {
+      const transcriptText = document.getElementById('transcript').value.trim();
+      if (!transcriptText) {
+        alert('No transcription available to send.');
+        return;
+      }
+
+      if (!apiKey) {
+        alert('No API key available.');
+        return;
+      }
+
+      // Push transcription to Google Sheets here (use an API or backend service)
+      try {
+        await sendToGoogleSheets(transcriptText, apiKey);
+        alert('Transcription sent to Sheets successfully!');
+      } catch (error) {
+        console.error('Error sending transcription to Sheets:', error);
+        alert('Error sending transcription to Sheets. Check the console.');
+      }
+    });
+
+    // Function to send transcription to Google Sheets (you'll need an API or backend for this)
+    async function sendToGoogleSheets(transcriptText, apiKey) {
+    console.log("Sending transcription to backend...");  // Add this log to verify if it's being triggered
+    const apiUrl = 'http://localhost:5000/send-to-sheets'; // Flask server's URL
+
+    const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ transcription: transcriptText }),
+    });
+
+    console.log("Response from Flask:", response);  // Log the response from Flask
+    if (!response.ok) {
+        throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+}
+  </script>
+</body>
+</html>
