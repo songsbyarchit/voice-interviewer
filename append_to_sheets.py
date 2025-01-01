@@ -6,6 +6,20 @@ from dotenv import load_dotenv
 import os
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
+import subprocess
+import sys
+
+# Ensure that the virtual environment is activated
+def install_requirements():
+    if not os.path.exists("requirements.txt"):
+        print("No requirements.txt found!")
+        return
+    
+    # Run pip install -r requirements.txt
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+
+# Install requirements when the app is run
+install_requirements()
 
 # Load environment variables from .env file
 load_dotenv()
@@ -15,7 +29,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Google Sheet and OpenAI API configuration
-SHEET_ID = "1U8nbGQ0G8IWEH3uuCearT3c39SNiHGuZGXfxI7TwrZQ"
+SHEET_ID = os.getenv("SHEET_ID")
 SERVICE_ACCOUNT_FILE = os.getenv("SERVICE_ACCOUNT_FILE")
 
 # OpenAI API Key
