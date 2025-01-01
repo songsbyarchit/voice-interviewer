@@ -1,9 +1,13 @@
 import json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from openai import OpenAI
+import openai  # Correct import
+
 from dotenv import load_dotenv
 import os
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Your Google Sheet ID
 SHEET_ID = "1U8nbGQ0G8IWEH3uuCearT3c39SNiHGuZGXfxI7TwrZQ"
@@ -14,7 +18,8 @@ SERVICE_ACCOUNT_FILE = "/Users/arsachde/Downloads/voice-interviewer-e2d008ff6856
 # OpenAI API Key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Set OpenAI API key
+openai.api_key = OPENAI_API_KEY
 
 def append_to_sheet(data):
     print(f"Data being sent: {data}")  # Debug: Print the data being sent
@@ -48,13 +53,19 @@ def ai_parse_transcription(transcription):
     Return the result as a JSON object with keys 'Physical Win' and 'Social Highlight'.
     Transcription: "{transcription}"
     """
-    response = client.chat.completions.create(model="gpt-3.5-turbo",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": prompt}
-    ])
+
+    # Make the request to OpenAI
+    response = openai.ChatCompletion.create(  # Correct method to call
+        model="gpt-3.5-turbo",  # Use a suitable GPT model
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    # Extract the result from the response
     try:
-        result = json.loads(response.choices[0].message.content.strip())
+        result = json.loads(response['choices'][0]['message']['content'].strip())  # Correct response handling
         return [result.get("Physical Win", ""), result.get("Social Highlight", "")]
     except json.JSONDecodeError:
         print("Failed to parse AI response.")
