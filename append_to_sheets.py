@@ -2,6 +2,8 @@ import json
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from openai import OpenAI
+from dotenv import load_dotenv
+import os
 
 # Your Google Sheet ID
 SHEET_ID = "1U8nbGQ0G8IWEH3uuCearT3c39SNiHGuZGXfxI7TwrZQ"
@@ -10,7 +12,7 @@ SHEET_ID = "1U8nbGQ0G8IWEH3uuCearT3c39SNiHGuZGXfxI7TwrZQ"
 SERVICE_ACCOUNT_FILE = "/Users/arsachde/Downloads/voice-interviewer-e2d008ff6856.json"
 
 # OpenAI API Key
-OPENAI_API_KEY = "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"  # Replace with your actual API key
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
