@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Voice Interviewer - MVP</title>
+  <style>
+    /* (Optional) Basic styling */
+    body {
+      font-family: Arial, sans-serif;
+      margin: 2rem;
+    }
+    button {
+      margin: 0.5rem 0;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+    }
+    #transcript, #summary {
+      display: block;
+      width: 100%;
+      height: 150px;
+      margin-top: 1rem;
+    }
+    #apiKeyInput {
+      display: block;
+      margin-bottom: 1rem;
+      width: 300px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Voice Interviewer MVP</h1>
+
+  <!-- Buttons -->
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn">Stop Recording</button>
+
+  <!-- Transcript display -->
+  <textarea id="transcript" placeholder="Your transcription will appear here..."></textarea>
+
+  <!-- Download transcript -->
+  <button id="downloadBtn">Download Transcript</button>
+
+  <!-- NEW: API Key input -->
+  <input
+    type="text"
+    id="apiKeyInput"
+    placeholder="Paste your OpenAI API key here (temporary for MVP)"
+  />
+
+  <!-- NEW: Generate Summary button -->
+  <button id="generateSummaryBtn">Generate Summary</button>
+
+  <!-- NEW: Summary display -->
+  <textarea id="summary" placeholder="Your summary will appear here..."></textarea>
+
+  <!-- NEW: Download summary -->
+  <button id="downloadSummaryBtn">Download Summary</button>
+
+  <script>
+    // Check browser support
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition;
+    let isListening = false;
+
+    if (SpeechRecognition) {
+      recognition = new SpeechRecognition();
+      recognition.continuous = true; // If you want continuous results
+      recognition.interimResults = true; // If you want to see partial (interim) results
+
+      // This will capture the transcript
+      recognition.addEventListener('result', (event) => {
+        let transcript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        document.getElementById('transcript').value = transcript;
+      });
+
+      recognition.addEventListener('start', () => {
+        console.log('Speech recognition started');
+      });
+
+      recognition.addEventListener('end', () => {
+        console.log('Speech recognition ended');
+        if (isListening) {
+          // If user didn't click "Stop" but recognition ended automatically, restart
+          recognition.start();
+        }
+      });
+    } else {
+      alert('Sorry, your browser does not support Speech Recognition');
+    }
+
+    // Start recording
+    document.getElementById('startBtn').addEventListener('click', () => {
+      if (!isListening && recognition) {
+        isListening = true;
+        recognition.start();
+      }
+    });
+
+    // Stop recording
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      if (isListening && recognition) {
+        isListening = false;
+        recognition.stop();
+      }
+    });
+
+    // Download transcript
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      const transcriptText = document.getElementById('transcript').value;
+      if (!transcriptText) {
+        alert('No transcript to download.');
+        return;
+      }
+      const blob = new Blob([transcriptText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+
+      // Create a temporary link to download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'transcript.txt';
+      document.body.appendChild(link);
+      link.click();
+
+      // Cleanup
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    });
+
+    // NEW: Generate Summary
+    document.getElementById('generateSummaryBtn').addEventListener('click', async () => {
+      const apiKey = document.getElementById('apiKeyInput').value.trim();
+      if (!apiKey) {
+        alert('Please enter your OpenAI API key first.');
+        return;
+      }
+
+      const transcriptText = document.getElementById('transcript').value.trim();
+      if (!transcriptText) {
+        alert('No transcript available to summarize.');
+        return;
+      }
+
+      // Optional: Clear previous summary
+      document.getElementById('summary').value = 'Loading summary...';
+
+      try {
+        const summary = await getOpenAISummary(apiKey, transcriptText);
+        document.getElementById('summary').value = summary;
+      } catch (error) {
+        console.error('Error generating summary:', error);
+        document.getElementById('summary').value = 'Error generating summary. Check console for details.';
+      }
+    });
+
+    // NEW: Download summary
+    document.getElementById('downloadSummaryBtn').addEventListener('click', () => {
+      const summaryText = document.getElementById('summary').value;
+      if (!summaryText) {
+        alert('No summary to download.');
+        return;
+      }
+      const blob = new Blob([summaryText], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'summary.txt';
+      document.body.appendChild(link);
+      link.click();
+
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    });
+
+    // NEW: Function to call OpenAI GPT
+    async function getOpenAISummary(apiKey, text) {
+      const apiUrl = 'https://api.openai.com/v1/chat/completions'; // using ChatGPT endpoint
+
+      // This is the system + user prompt structure for ChatGPT
+      const messages = [
+        {
+          role: 'system',
+          content: 'You are a helpful assistant that summarizes text succinctly.'
+        },
+        {
+          role: 'user',
+          content: `Please provide a brief summary of the following text - it must be 10 words or less:\n\n"${text}"`
+        }
+      ];
+
+      // Make the request to OpenAI
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-3.5-turbo', // or 'gpt-4' if you have access
+          messages: messages,
+          max_tokens: 100,       // limit summary length
+          temperature: 0.7       // creativity
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status} - ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      const summary = data.choices?.[0]?.message?.content?.trim();
+      return summary || 'No summary found.';
+    }
+  </script>
+</body>
+</html>
