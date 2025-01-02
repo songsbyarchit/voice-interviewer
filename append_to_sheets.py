@@ -106,39 +106,65 @@ def home():
     # Return the OpenAI API key to the frontend
     return render_template('index.html', openai_api_key=OPENAI_API_KEY)
 
-@app.route('/send-to-sheets', methods=['POST'])
-def send_to_sheets():
-    """Receive transcription from frontend, process it, and append to Google Sheets."""
+@app.route('/parse-only', methods=['POST'])
+def parse_only():
+    """
+    Receive transcription, parse it with OpenAI, and return the physical win
+    and social highlight (without appending to Sheets).
+    """
     try:
-        print("Received request at '/send-to-sheets'")  # Log when the route is accessed
-        
-        # Get the data sent from the frontend (index.html)
-        data = request.get_json()  
-        transcription = data.get("transcription")
+        data = request.get_json()
+        transcription = data.get("transcription", "")
 
         if not transcription:
-            return jsonify({"error": "No transcription provided."}), 400  # Error handling
+            return jsonify({
+                "error": "No transcription provided."
+            }), 400
 
-        # Log the received transcription
-        print(f"Received transcription: {transcription}")
+        # Parse the transcription using AI (reuse the existing function)
+        physical_win, social_highlight = ai_parse_transcription(transcription)
 
-        # Parse the transcription using AI
-        parsed_data = ai_parse_transcription(transcription)
+        return jsonify({
+            "physical_win": physical_win,
+            "social_highlight": social_highlight
+        }), 200
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Format as YYYY-MM-DD HH:MM:SS
-        parsed_data.insert(2, timestamp)  # Insert the timestamp at the 3rd column (index 2)
-
-        # Log the parsed data before sending it to Google Sheets
-        print(f"Parsed data: {parsed_data}")
-
-        # Append the parsed data to Google Sheets
-        append_to_sheet(parsed_data)
-
-        return jsonify({"message": "Data successfully sent to Google Sheets."})
     except Exception as e:
-        # If any error occurs, log the error and return a response
+        print(f"Error during '/parse-only' request: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/send-to-sheets', methods=['POST'])
+def send_to_sheets():
+    """
+    Expects JSON: {
+      "physical_win": "...",
+      "social_highlight": "...",
+      "transcription": "... (optional if you want)",
+    }
+    Appends these to Google Sheets with a timestamp.
+    """
+    try:
+        data = request.get_json()
+        physical_win = data.get("physical_win", "")
+        social_highlight = data.get("social_highlight", "")
+        transcription = data.get("transcription", "")  # optional if you want
+        print("Received final data for Sheets:", data)
+
+        # If both physical_win and social_highlight are blank, we skip appending
+        if not physical_win and not social_highlight:
+            return jsonify({"message": "No recognized metrics; skipping Sheets append."}), 200
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        row_to_append = [physical_win, social_highlight, timestamp]
+
+        # Actually append the row to Google Sheets
+        append_to_sheet(row_to_append)
+
+        return jsonify({"message": "Data successfully appended to Google Sheets."})
+
+    except Exception as e:
         print(f"Error during 'send-to-sheets' request: {e}")
-        return jsonify({"error": str(e)}), 500  # Send back the error message
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

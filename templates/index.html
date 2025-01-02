@@ -34,7 +34,20 @@
   <!-- Transcript display -->
   <textarea id="transcript" placeholder="Your transcription will appear here..."></textarea>
 
+  <!-- Custom modal for "continue/skip" -->
+  <div id="customConfirmOverlay" style="display:none; position:fixed; top:0; left:0; 
+    width:100%; height:100%; background:rgba(0,0,0,0.5); 
+    justify-content:center; align-items:center; z-index:9999;">
+  <div id="customConfirmBox" style="background:#fff; padding:20px; border-radius:8px; max-width:400px; text-align:center;">
+      <p id="customConfirmMessage" style="margin-bottom: 1em;">Placeholder text</p>
+      <button id="customConfirmPositive" style="margin-right: 1em;">Add It</button>
+      <button id="customConfirmNegative">Skip</button>
+    </div>
+  </div>
+
   <script>
+    let isRePrompting = false; // Tracks whether we're in a re-prompted attempt
+
     // Fetch API key from Flask (rendered as a variable in the HTML)
     const apiKey = "{{ openai_api_key }}"; // This gets the OpenAI API key from Flask
 
@@ -65,11 +78,13 @@
 
       recognition.addEventListener('end', () => {
         console.log('Speech recognition ended');
-        if (isListening) {
-          // If user didn't click "Stop" but recognition ended automatically, restart
-          recognition.start();
+        // If you're not auto-restarting, re-enable "Start":
+        if (!isListening) {
+          document.getElementById('startBtn').disabled = false;
+          document.getElementById('stopBtn').disabled = true;
         }
       });
+
     } else {
       alert('Sorry, your browser does not support Speech Recognition');
     }
@@ -79,6 +94,8 @@
       if (!isListening && recognition) {
         isListening = true;
         recognition.start();
+        // Disable "Send to Sheets" while recording
+        document.getElementById('sendToSheetsBtn').disabled = true;
       }
     });
 
@@ -87,33 +104,195 @@
       if (isListening && recognition) {
         isListening = false;
         recognition.stop();
-        document.getElementById('startBtn').disabled = false; // Re-enable start button
-        document.getElementById('stopBtn').disabled = true; // Disable stop button when recording ends
+
+        // If we're in the first round, enable "Send to Sheets" immediately
+        if (!isRePrompting) {
+          document.getElementById('sendToSheetsBtn').disabled = false;
+        } else {
+          // If we're in a re-prompted attempt, keep "Send to Sheets" disabled
+          // It will only be re-enabled after sending is complete
+          document.getElementById('sendToSheetsBtn').disabled = true;
+        }
       }
     });
 
     // Send transcription to Google Sheets
     document.getElementById('sendToSheetsBtn').addEventListener('click', async () => {
-      const transcriptText = document.getElementById('transcript').value.trim();
-      if (!transcriptText) {
-        alert('No transcription available to send.');
-        return;
-      }
+  const transcriptText = document.getElementById('transcript').value.trim();
+  if (!transcriptText) {
+    alert('No transcription available to send.');
+    return;
+  }
 
-      if (!apiKey) {
-        alert('No API key available.');
-        return;
-      }
+  if (!apiKey) {
+    alert('No API key available.');
+    return;
+  }
 
-      // Push transcription to Google Sheets here (use an API or backend service)
-      try {
-        await sendToGoogleSheets(transcriptText, apiKey);
-        alert('Transcription sent to Sheets successfully!');
-      } catch (error) {
-        console.error('Error sending transcription to Sheets:', error);
-        alert('Error sending transcription to Sheets. Check the console.');
+  document.getElementById('sendToSheetsBtn').disabled = true;
+
+  try {
+    // 1) Parse the current transcription
+    const parseResult = await parseTranscription(transcriptText, apiKey);
+    let physicalWin = parseResult.physical_win || "";
+    let socialHighlight = parseResult.social_highlight || "";
+
+    // 2) Check if zero, one, or both metrics found
+    if (!physicalWin && !socialHighlight) {
+      while (true) {
+        const proceed = await showCustomConfirm(
+          "No Physical or Social metric recognized. Add something or skip entirely?"
+        );
+        if (!proceed) {
+          // user clicked "Skip"
+          alert("Skipping. No row will be added.");
+          return;
+        }
+        // If user clicked "Add It", let them record again
+        await getMissingMetric("both (physical & social)");
+
+        // Now re-parse
+        const newTranscript = document.getElementById('transcript').value.trim();
+        const newParse = await parseTranscription(newTranscript, apiKey);
+        physicalWin = newParse.physical_win || "";
+        socialHighlight = newParse.social_highlight || "";
+
+        // If we now have at least one metric, break the loop
+        if (physicalWin || socialHighlight) {
+          break;
+        }
+
+        // Otherwise, loop again and prompt user once more
+        // They can skip or try again infinitely.
       }
-    });
+    }
+
+    // REPLACE the entire block with:
+    if (!physicalWin && socialHighlight) {
+      while (true) {
+        const wantsToContinue = await showCustomConfirm(
+          "We found only Social. Add Physical or skip entirely?"
+        );
+
+        if (!wantsToContinue) {
+          // user clicked "Skip"
+          // Option: skip everything
+          // alert("Skipping entirely."); return;
+          // OR partial row with Social only:
+          alert("OK, skipping Physical. We'll only send your Social metric.");
+          break; // exit the loop, proceed with partial
+        }
+
+        // If user wants to continue:
+        await getMissingMetric("physical");
+        const newTranscript = document.getElementById('transcript').value.trim();
+        const newParse = await parseTranscription(newTranscript, apiKey);
+
+        // Merge new parse
+        physicalWin = newParse.physical_win || physicalWin;
+        socialHighlight = newParse.social_highlight || socialHighlight;
+
+        // If we now have Physical, break and proceed
+        if (physicalWin) {
+          break;
+        }
+
+        // If STILL no Physical, loop again
+        // They can skip or keep trying infinitely.
+      }
+    }
+
+    else if (physicalWin && !socialHighlight) {
+      while (true) {
+        const wantsToContinue = await showCustomConfirm(
+          "We found only Physical. Add Social or skip entirely?"
+        );
+
+        if (!wantsToContinue) {
+          // user clicked "Skip"
+          // Option: skip everything
+          // alert("Skipping entirely."); return;
+          // OR partial row with Physical only:
+          alert("OK, skipping Social. We'll only send your Physical metric.");
+          break; // exit the loop, proceed with partial
+        }
+
+        // If user wants to continue:
+        await getMissingMetric("social");
+        const newTranscript = document.getElementById('transcript').value.trim();
+        const newParse = await parseTranscription(newTranscript, apiKey);
+
+        // Merge new parse
+        physicalWin = newParse.physical_win || physicalWin;
+        socialHighlight = newParse.social_highlight || socialHighlight;
+
+        // If we now have Social, break and proceed
+        if (socialHighlight) {
+          break;
+        }
+
+        // If STILL no Social, loop again
+        // They can skip or keep trying infinitely.
+      }
+    }
+
+    // 3) By the time we get here, we either have:
+    //    - Both metrics, or
+    //    - Exactly one metric because user skipped the other,
+    //    - Or we decided to skip entirely earlier and returned.
+
+    // If we STILL have no metrics, skip again:
+    if (!physicalWin && !socialHighlight) {
+      alert("No metrics recognized. No row appended.");
+      return;
+    }
+
+    // Otherwise, do final send
+    const finalResponse = await sendFinalToSheets(
+      physicalWin,
+      socialHighlight,
+      document.getElementById('transcript').value.trim(),
+      apiKey
+    );
+    alert(finalResponse.message || "Done!");
+
+    document.getElementById('transcript').value = ""; // Clear the transcript
+    document.getElementById('sendToSheetsBtn').disabled = true; // Disable button
+    isRePrompting = false; // Reset the flag
+
+    // Re-enable the Send button after data is sent
+    setTimeout(() => {
+      document.getElementById('sendToSheetsBtn').disabled = false;
+    }, 1000); // Optional: small delay to ensure smooth user experience
+
+    
+  } catch (error) {
+    console.error('Error in final flow:', error);
+    alert('Error in final flow. Check console.');
+  }
+});
+
+    /**
+     * Helper function to let user speak more to capture the missing metric
+     * You can re-use the existing recognition if you prefer. 
+     * Here’s a simplistic “wait for user to press Start/Stop again”.
+     */
+     async function getMissingMetric(missingType) {
+      alert(`Press 'Start Recording' and mention your ${missingType} metric, then press 'Stop Recording' to finish.`);
+
+      isRePrompting = true; // Indicate that we're in a re-prompted attempt
+
+      return new Promise((resolve) => {
+        const stopBtn = document.getElementById('stopBtn');
+        
+        function handleStopClick() {
+          stopBtn.removeEventListener('click', handleStopClick);
+          resolve(); // Resolve when "Stop Recording" is clicked
+        }
+
+        stopBtn.addEventListener('click', handleStopClick);
+      });
+    }
 
     // Function to send transcription to Google Sheets (you'll need an API or backend for this)
     async function sendToGoogleSheets(transcriptText, apiKey) {
@@ -137,6 +316,75 @@
     const data = await response.json();
     return data;
 }
+
+async function parseTranscription(transcriptText, apiKey) {
+    // Call the /parse-only endpoint to get the recognized physical/social
+    const apiUrl = 'http://localhost:5000/parse-only';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ transcription: transcriptText }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Error parsing transcription: ${response.status} - ${response.statusText}`);
+    }
+
+    return await response.json(); 
+  }
+
+  async function sendFinalToSheets(physical, social, transcript, apiKey) {
+    // Call the /send-to-sheets endpoint with final data
+    const apiUrl = 'http://localhost:5000/send-to-sheets';
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        physical_win: physical,
+        social_highlight: social,
+        transcription: transcript // optional
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
+    }
+
+    return await response.json();
+  }
+
+  function showCustomConfirm(message) {
+    return new Promise((resolve) => {
+      // Get elements
+      const overlay = document.getElementById('customConfirmOverlay');
+      const msgElem = document.getElementById('customConfirmMessage');
+      const yesBtn = document.getElementById('customConfirmPositive');
+      const noBtn = document.getElementById('customConfirmNegative');
+
+      // Set the message
+      msgElem.textContent = message;
+
+      // Show overlay
+      overlay.style.display = 'flex';
+
+      // Wire up clicks
+      yesBtn.onclick = () => {
+        overlay.style.display = 'none';
+        resolve(true); // user clicked "Add It"
+      };
+
+      noBtn.onclick = () => {
+        overlay.style.display = 'none';
+        resolve(false); // user clicked "Skip"
+      };
+    });
+  }
   </script>
 </body>
 </html>
