@@ -35,8 +35,8 @@
   <textarea id="transcript" placeholder="Your transcription will appear here..."></textarea>
 
   <script>
-    // Fetch API key from Flask (rendered as a variable in the HTML)
-    const apiKey = "{{ openai_api_key }}"; // This gets the OpenAI API key from Flask
+    const sessionId = Math.random().toString(36).substring(2, 15);
+    const apiKey = "{{ openai_api_key }}";
 
     // Check browser support
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -45,10 +45,9 @@
 
     if (SpeechRecognition) {
       recognition = new SpeechRecognition();
-      recognition.continuous = true; // If you want continuous results
-      recognition.interimResults = true; // If you want to see partial (interim) results
+      recognition.continuous = true;
+      recognition.interimResults = true;
 
-      // This will capture the transcript
       recognition.addEventListener('result', (event) => {
         let transcript = '';
         for (let i = 0; i < event.results.length; i++) {
@@ -60,21 +59,17 @@
       recognition.addEventListener('start', () => {
         console.log('Speech recognition started');
         document.getElementById('startBtn').disabled = true;
-        document.getElementById('stopBtn').disabled = false; // Enable stop button when recording starts
+        document.getElementById('stopBtn').disabled = false;
       });
 
       recognition.addEventListener('end', () => {
         console.log('Speech recognition ended');
-        if (isListening) {
-          // If user didn't click "Stop" but recognition ended automatically, restart
-          recognition.start();
-        }
+        if (isListening) recognition.start();
       });
     } else {
       alert('Sorry, your browser does not support Speech Recognition');
     }
 
-    // Start recording
     document.getElementById('startBtn').addEventListener('click', () => {
       if (!isListening && recognition) {
         isListening = true;
@@ -82,17 +77,15 @@
       }
     });
 
-    // Stop recording
     document.getElementById('stopBtn').addEventListener('click', () => {
       if (isListening && recognition) {
         isListening = false;
         recognition.stop();
-        document.getElementById('startBtn').disabled = false; // Re-enable start button
-        document.getElementById('stopBtn').disabled = true; // Disable stop button when recording ends
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('stopBtn').disabled = true;
       }
     });
 
-    // Send transcription to Google Sheets
     document.getElementById('sendToSheetsBtn').addEventListener('click', async () => {
       const transcriptText = document.getElementById('transcript').value.trim();
       if (!transcriptText) {
@@ -100,43 +93,101 @@
         return;
       }
 
-      if (!apiKey) {
-        alert('No API key available.');
-        return;
-      }
-
-      // Push transcription to Google Sheets here (use an API or backend service)
       try {
-        await sendToGoogleSheets(transcriptText, apiKey);
-        alert('Transcription sent to Sheets successfully!');
+        await sendToGoogleSheets(transcriptText);
       } catch (error) {
         console.error('Error sending transcription to Sheets:', error);
         alert('Error sending transcription to Sheets. Check the console.');
       }
     });
 
-    // Function to send transcription to Google Sheets (you'll need an API or backend for this)
-    async function sendToGoogleSheets(transcriptText, apiKey) {
-    console.log("Sending transcription to backend...");  // Add this log to verify if it's being triggered
-    const apiUrl = 'http://localhost:5000/send-to-sheets'; // Flask server's URL
+    async function sendToGoogleSheets(transcriptText) {
+      console.log("Sending transcription to backend...");
+      const apiUrl = 'http://localhost:5000/send-to-sheets';
 
-    const response = await fetch(apiUrl, {
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ transcription: transcriptText }),
-    });
+        body: JSON.stringify({ transcription: transcriptText, session_id: sessionId }),
+      });
 
-    console.log("Response from Flask:", response);  // Log the response from Flask
-    if (!response.ok) {
+      if (!response.ok) {
         throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log("Response Data:", data);
+
+      if (data.missing) {
+        await handleMissingAchievements(data.missing);
+      } else {
+        alert(data.message);
+      }
     }
 
-    const data = await response.json();
-    return data;
-}
+        async function handleMissingAchievements(missingType) {
+      let isComplete = false;
+
+      while (!isComplete) {
+        let physicalAchievement = "";
+        let socialAchievement = "";
+
+        if (missingType === "both") {
+          alert("Both achievements are missing! Please provide them below or skip.");
+        } else if (missingType === "physical") {
+          alert("Physical achievement is missing! Please provide it below or skip.");
+        } else if (missingType === "social") {
+          alert("Social achievement is missing! Please provide it below or skip.");
+        }
+
+        if (missingType !== "social") {
+          physicalAchievement = prompt("Enter your physical achievement or leave blank to skip:") || "";
+        }
+        if (missingType !== "physical") {
+          socialAchievement = prompt("Enter your social achievement or leave blank to skip:") || "";
+        }
+
+        // Send both to backend for re-validation
+        const validationResponse = await validateWithBackend(physicalAchievement, socialAchievement);
+
+        if (validationResponse.complete) {
+          isComplete = true; // Exit the loop if validation is complete
+          alert("All achievements added successfully!");
+        } else {
+          missingType = validationResponse.missing; // Update missing type based on response
+          if (!physicalAchievement && !socialAchievement) {
+            alert("You skipped both. Submitting available data.");
+            isComplete = true; // Stop asking for input
+          } else {
+            alert(validationResponse.message);
+          }
+        }
+      }
+    }
+
+    async function validateWithBackend(physical, social) {
+      const apiUrl = 'http://localhost:5000/send-to-sheets';
+
+      const payload = {
+        session_id: sessionId,
+        physical_achievement: physical || "",
+        social_win: social || "",
+      };
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend error: ${response.status} - ${response.statusText}`);
+      }
+
+      return await response.json();
+    }
   </script>
 </body>
 </html>

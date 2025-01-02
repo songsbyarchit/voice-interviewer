@@ -106,39 +106,58 @@ def home():
     # Return the OpenAI API key to the frontend
     return render_template('index.html', openai_api_key=OPENAI_API_KEY)
 
+temporary_data = {}
+
 @app.route('/send-to-sheets', methods=['POST'])
 def send_to_sheets():
-    """Receive transcription from frontend, process it, and append to Google Sheets."""
     try:
-        print("Received request at '/send-to-sheets'")  # Log when the route is accessed
+        print("Received request at '/send-to-sheets'")
         
-        # Get the data sent from the frontend (index.html)
-        data = request.get_json()  
-        transcription = data.get("transcription")
+        # Get the data sent from the frontend
+        data = request.get_json()
+        physical_achievement = data.get("physical_achievement", "").strip()
+        social_win = data.get("social_win", "").strip()
+        user_session_id = data.get("session_id", "default")
 
-        if not transcription:
-            return jsonify({"error": "No transcription provided."}), 400  # Error handling
+        # Add a timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Log the received transcription
-        print(f"Received transcription: {transcription}")
+        # Store session data
+        if user_session_id not in temporary_data:
+            temporary_data[user_session_id] = {
+                "physical_achievement": "",
+                "social_win": "",
+                "timestamp": datetime.now(),
+            }
 
-        # Parse the transcription using AI
-        parsed_data = ai_parse_transcription(transcription)
+        # Update session data with provided input
+        if physical_achievement:
+            temporary_data[user_session_id]["physical_achievement"] = physical_achievement
+        if social_win:
+            temporary_data[user_session_id]["social_win"] = social_win
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Format as YYYY-MM-DD HH:MM:SS
-        parsed_data.insert(2, timestamp)  # Insert the timestamp at the 3rd column (index 2)
+        # Check if at least one value is provided
+        final_data = [
+            temporary_data[user_session_id]["physical_achievement"],
+            temporary_data[user_session_id]["social_win"],
+        ]
 
-        # Log the parsed data before sending it to Google Sheets
-        print(f"Parsed data: {parsed_data}")
+        if not final_data[0] and not final_data[1]:
+            return jsonify({
+                "message": "No data provided. At least one achievement is required to proceed.",
+                "missing": "both",
+                "complete": False,
+            }), 200
 
-        # Append the parsed data to Google Sheets
-        append_to_sheet(parsed_data)
+        # If user skips, append available data to Google Sheets
+        append_to_sheet([final_data[0] or "N/A", final_data[1] or "N/A", timestamp])
+        del temporary_data[user_session_id]
 
-        return jsonify({"message": "Data successfully sent to Google Sheets."})
+        return jsonify({"message": "Achievements added successfully (skipped fields marked as N/A).", "complete": True}), 200
+
     except Exception as e:
-        # If any error occurs, log the error and return a response
         print(f"Error during 'send-to-sheets' request: {e}")
-        return jsonify({"error": str(e)}), 500  # Send back the error message
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
